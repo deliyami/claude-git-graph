@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const PANE = {
   component: 'Pane',
@@ -59,6 +59,7 @@ test('pressing a commit opens its details, pressing again closes them', async ($
 })
 
 test('the browser button writes an SVG graph page and opens it', async ($, on) => {
+  mock.clock(on)
   const opened: string[][] = []
   const written: { path: string; text: string }[] = []
   on('process.run', (_$, e) => {
@@ -90,6 +91,7 @@ test('the browser button writes an SVG graph page and opens it', async ($, on) =
 })
 
 test('inside Orca the page opens in an Orca tab, reusing the one already showing it', async ($, on) => {
+  mock.clock(on)
   const orca: string[][] = []
   let tabs: { browserPageId: string; url: string }[] = []
   on('env.get', (_$, e) => ({
@@ -116,6 +118,29 @@ test('inside Orca the page opens in an Orca tab, reusing the one already showing
     ['tab', 'switch', '--page', 'p1', '--focus'],
   ])
   await ui.unmount()
+})
+
+test('a slow open shows a spinner and its step until the page is open', async ($, on) => {
+  const clock = mock.clock(on)
+  on('env.get', (_$, e) => ({
+    value: e.name === 'TMPDIR' ? '/tmp' : e.name === 'TERM_PROGRAM' ? 'Orca' : e.name === 'ORCA_CLI_BIN_DIR' ? '/orca/bin' : undefined,
+  }))
+  on('fs.write', () => ({ value: undefined }))
+  on('process.run', async (_$, e) => {
+    if (e.argv[0] !== '/orca/bin/orca') return fakeGit(e.argv)
+    await clock.sleep(3000)
+    return run(JSON.stringify({ ok: true, result: { tabs: [] } }))
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'git-graph', surface, ...PANE })
+    const pressed = ui.press({ key: 'Open in browser' })
+    await clock.advance(250)
+    expect(await ui.find({ type: 'Text', text: /Opening tab… ▰▰▰ 3\/3/ })).toBeDefined()
+    await clock.advance(6000)
+    await pressed
+    expect(await ui.find({ type: 'Text', text: /Opening tab/ })).toBeUndefined()
+    await ui.unmount()
+  }
 })
 
 test('the pane explains when git fails', async ($, on) => {

@@ -12,7 +12,22 @@ const FIELD = '\x1f'
 const RECORD = '\x1e'
 const LANE_COLORS: Color[] = ['ide', 'claude', 'success', 'warning', 'merged', 'permission', 'suggestion', 'error']
 
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const STEPS = 3
+// Redraws of the pane (a spinner frame, a press) within this window reuse the last git output instead of running it again.
+const FRESH_MS = 2000
+
 const selected = atom({ plugin: 'git-graph', key: 'selected' } as const, null)
+const opening = atom({ plugin: 'git-graph', key: 'opening' } as const, null)
+
+const recent = new Map<string, { at: number; value: Promise<unknown> }>()
+const fresh = <T,>(key: string, load: () => Promise<T>): Promise<T> => {
+  const hit = recent.get(key)
+  if (hit && Date.now() - hit.at < FRESH_MS) return hit.value as Promise<T>
+  const value = load()
+  recent.set(key, { at: Date.now(), value })
+  return value
+}
 
 const laneColor = (n: number) => LANE_COLORS[n % LANE_COLORS.length]!
 
@@ -86,8 +101,10 @@ const openInOrca = async ($: EngineInterface, url: string) => {
     if (!tab) return (await $.process.run([orca, 'tab', 'create', '--url', url])).exitCode === 0
 
     const page = tab.browserPageId
-    const shown = await $.process.run([orca, 'goto', '--page', page, '--url', url])
-    await $.process.run([orca, 'tab', 'switch', '--page', page, '--focus'])
+    const [shown] = await Promise.all([
+      $.process.run([orca, 'goto', '--page', page, '--url', url]),
+      $.process.run([orca, 'tab', 'switch', '--page', page, '--focus']),
+    ])
     return shown.exitCode === 0
   } catch {
     return false
@@ -95,9 +112,30 @@ const openInOrca = async ($: EngineInterface, url: string) => {
 }
 
 // Writes the graph as an SVG page and opens it, in Orca's browser when running there, else the default browser.
+// The pane shows a spinner and the step in progress until it is done; a second press meanwhile does nothing.
 const openInBrowser = async ($: EngineInterface) => {
+  if (await read($, opening)) return
+  let isDone = false
+  const step = (n: number, label: string) => update($, opening, now => ({ step: n, label, frame: now?.frame ?? 0 }))
+  await step(1, 'Reading history')
+  void (async () => {
+    while (!isDone) {
+      await $.clock.sleep(100)
+      if (!isDone) await update($, opening, now => (now ? { ...now, frame: now.frame + 1 } : now))
+    }
+  })().catch(() => {})
+
+  try {
+    $.ui.toast(await writeAndOpen($, step))
+  } finally {
+    isDone = true
+    await update($, opening, () => null)
+  }
+}
+
+const writeAndOpen = async ($: EngineInterface, step: (n: number, label: string) => Promise<unknown>) => {
   const graph = await loadGraph($)
-  if (graph.error !== undefined) return $.ui.toast(graph.error)
+  if (graph.error !== undefined) return graph.error
 
   const [log, top] = await Promise.all([
     $.process.run([
@@ -121,13 +159,15 @@ const openInBrowser = async ($: EngineInterface) => {
   const root = top.stdout.trim()
   const title = root.split('/').pop() || 'Git Graph'
   const file = await pagePath($, root)
+  await step(2, 'Writing page')
   await $.fs.write(file, buildHtml(title, graph.rows, details, graph.changed))
 
-  if (await openInOrca($, `file://${encodeURI(file)}`)) return $.ui.toast('Git Graph opened in an Orca tab.')
+  await step(3, 'Opening tab')
+  if (await openInOrca($, `file://${encodeURI(file)}`)) return 'Git Graph opened in an Orca tab.'
 
   const opened = await $.process.run(['open', file])
   if (opened.exitCode !== 0) await $.process.run(['xdg-open', file])
-  $.ui.toast('Git Graph opened in your browser.')
+  return 'Git Graph opened in your browser.'
 }
 
 export const register: Register = on => {
@@ -148,14 +188,17 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
-    const loaded = await loadGraph($)
+    const loaded = await fresh('graph', () => loadGraph($))
     if (loaded.error !== undefined) return <Text dimColor>{loaded.error}</Text>
     if (loaded.commits.length === 0) return <Text dimColor>No commits yet.</Text>
 
     const { rows, changed } = loaded
     const open = await read($, selected)
+    const progress = await read($, opening)
     const details = open
-      ? await $.process.run(['git', 'show', '--stat', '--color=never', '--format=%H%n%an <%ae>%n%ad%n%n%B', open])
+      ? await fresh(`show ${open}`, () =>
+          $.process.run(['git', 'show', '--stat', '--color=never', '--format=%H%n%an <%ae>%n%ad%n%n%B', open]),
+        )
       : undefined
 
     const graph = (cells: Cell[]) =>
@@ -166,10 +209,19 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box>
-          <Button hotkey="o" onPress={() => openInBrowser($)}>
+        <Box gap={1}>
+          <Button hotkey="o" dimColor={progress !== null} onPress={() => openInBrowser($)}>
             Open in browser
           </Button>
+          {progress && (
+            <Text>
+              <Text color="claude">{SPINNER[progress.frame % SPINNER.length]}</Text> {progress.label}…{' '}
+              <Text color="claude">{'▰'.repeat(progress.step)}</Text>
+              <Text dimColor>
+                {'▱'.repeat(STEPS - progress.step)} {progress.step}/{STEPS}
+              </Text>
+            </Text>
+          )}
         </Box>
         {rows.map(row =>
           row.commit === null ? (
