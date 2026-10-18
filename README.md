@@ -12,12 +12,12 @@ Then run `/git-graph` inside any git repository.
 
 ## Status
 
-Early skeleton: `/git-graph` opens a pane with `git log --graph --all` output.
+`/git-graph` opens a pane with the commit graph of all branches: colored lanes, refs and authors. Press a commit to expand its details and changed files; Esc closes the pane.
 
 ## Roadmap
 
 - [x] Commit graph pane
-- [ ] Select a commit and show its details / changed files
+- [x] Select a commit and show its details / changed files
 - [ ] Diff view
 - [ ] Checkout, merge, rebase, cherry-pick with confirmation
 
