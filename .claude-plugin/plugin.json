@@ -1,6 +1,6 @@
 {
   "name": "git-graph",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Show the git commit graph of the current repository in a pane",
   "author": {
     "name": "deliyami"
