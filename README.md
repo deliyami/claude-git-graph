@@ -28,3 +28,7 @@ claude --plugin-dir ~/Desktop/dev/claude-git-graph
 claude plugin validate ~/Desktop/dev/claude-git-graph
 claude plugin test ~/Desktop/dev/claude-git-graph
 ```
+
+## License
+
+[MIT](LICENSE)
