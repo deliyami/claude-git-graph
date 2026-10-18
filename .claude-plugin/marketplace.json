@@ -1,0 +1,14 @@
+{
+  "name": "claude-git-graph",
+  "owner": {
+    "name": "deliyami"
+  },
+  "description": "Git Graph pane for Claude Code",
+  "plugins": [
+    {
+      "name": "git-graph",
+      "source": "./",
+      "description": "Show the git commit graph of the current repository in a pane"
+    }
+  ]
+}
